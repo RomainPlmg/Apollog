@@ -1,4 +1,4 @@
-use crate::{analyser::*, types::*};
+use crate::{analyser::*, types::*, utils::is_position_in_range};
 use dashmap::DashMap;
 use tower_lsp::{
     jsonrpc::Result,
@@ -26,6 +26,7 @@ impl LanguageServer for Backend {
                     TextDocumentSyncKind::FULL,
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..Default::default()
             },
         })
@@ -76,7 +77,7 @@ impl LanguageServer for Backend {
                                 port.class,
                                 port.size.as_deref().unwrap_or_default()
                             )),
-                            kind: SymbolKind::INTERFACE,
+                            kind: SymbolKind::FIELD,
                             tags: None,
                             deprecated: None,
                             range: port.range,
@@ -105,6 +106,32 @@ impl LanguageServer for Backend {
             }
             return Ok(Some(DocumentSymbolResponse::Nested(module_symbols)));
         }
+        Ok(None)
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        if let Some(modules) = self.db.get(&uri) {
+            for module in modules.value() {
+                for port in &module.ports {
+                    if is_position_in_range(position, port.range) {
+                        return Ok(Some(Hover {
+                            contents: HoverContents::Scalar(MarkedString::String(format!(
+                                "**Port**: {}  \n**Type**: {:?} {:?} {}",
+                                port.name,
+                                port.direction,
+                                port.class,
+                                port.size.as_deref().unwrap_or("")
+                            ))),
+                            range: Some(port.range),
+                        }));
+                    }
+                }
+            }
+        }
+
         Ok(None)
     }
 
