@@ -8,7 +8,12 @@
         (net_port_header1
             (port_direction)? @port.direction
             (net_port_type1
-                (net_type) @port.class)?
+                (net_type) @port.class
+                (data_type_or_implicit1
+                    (implicit_data_type1
+                        (packed_dimension)? @port.size)?
+                )?    
+            )?
         )
         (variable_port_header
             (port_direction)? @port.direction

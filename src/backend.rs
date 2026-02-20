@@ -172,6 +172,8 @@ impl Backend {
     async fn parse_and_store(&self, uri: Url, code: String) {
         let (tree, modules, diagnostics) = self.analyser.parse_file(&code);
 
+        self.client.log_message(MessageType::INFO, format!("{}", tree.root_node().to_sexp())).await;
+
         let new_doc = DocumentData {
             text: code,
             modules: modules,
