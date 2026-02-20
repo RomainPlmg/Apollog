@@ -1,5 +1,5 @@
-use tower_lsp::lsp_types::Diagnostic;
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator, Tree};
+use tower_lsp::lsp_types::{Diagnostic, Position};
+use tree_sitter::{Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::{types::*, utils::*};
 
@@ -46,11 +46,16 @@ impl Analyser {
 
                 match name {
                     "module.name" => {
+                        if let Some(ref mut m) = current_module {
+                            m.name = text.to_string();
+                        }
+                    }
+                    "module.item" => {
                         if let Some(m) = current_module.take() {
                             all_modules.push(m);
                         }
+
                         let mut m = Module::default();
-                        m.name = text.to_string();
                         m.range = ts_to_lsp_range(node);
                         current_module = Some(m);
                     }
@@ -91,5 +96,19 @@ impl Analyser {
         }
 
         all_modules
+    }
+
+    pub fn get_symbol_name_at(&self, tree: &Tree, code: &str, pos: Position) -> Option<String> {
+        let ts_point = Point::new(pos.line as usize, pos.character as usize);
+
+        let node = tree
+            .root_node()
+            .named_descendant_for_point_range(ts_point, ts_point)?;
+
+        if node.kind() == "simple_identifier" {
+            return Some(node.utf8_text(code.as_bytes()).ok()?.to_string());
+        }
+
+        None
     }
 }

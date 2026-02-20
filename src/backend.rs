@@ -36,6 +36,7 @@ impl LanguageServer for Backend {
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -132,11 +133,18 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        if let Some(document) = self.db.get(&uri) {
-            let modules = &document.modules;
-            for module in modules {
-                for port in &module.ports {
-                    if is_position_in_range(position, port.range) {
+        if let Some(doc) = self.db.get(&uri) {
+            if let Some(name) = self
+                .analyser
+                .get_symbol_name_at(&doc.tree, &doc.text, position)
+            {
+                let current_module = doc
+                    .modules
+                    .iter()
+                    .find(|m| is_position_in_range(position, m.range));
+
+                if let Some(module) = current_module {
+                    if let Some(port) = module.ports.iter().find(|p| p.name == name) {
                         return Ok(Some(Hover {
                             contents: HoverContents::Scalar(MarkedString::String(format!(
                                 "**Port**: {}  \n**Type**: {:?} {:?} {}",
@@ -145,13 +153,47 @@ impl LanguageServer for Backend {
                                 port.class,
                                 port.size.as_deref().unwrap_or("")
                             ))),
-                            range: Some(port.range),
+                            range: Some(Range {
+                                start: position,
+                                end: position,
+                            }),
                         }));
                     }
                 }
             }
         }
 
+        Ok(None)
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        if let Some(doc) = self.db.get(&uri) {
+            if let Some(name) = self
+                .analyser
+                .get_symbol_name_at(&doc.tree, &doc.text, position)
+            {
+                let current_module = doc
+                    .modules
+                    .iter()
+                    .find(|m| is_position_in_range(position, m.range));
+
+                if let Some(module) = current_module {
+                    if let Some(port) = module.ports.iter().find(|p| p.name == name) {
+                        // Au lieu d'un texte Hover, on renvoie la position du port !
+                        return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                            uri: uri.clone(),
+                            range: port.selection_range, // La position exacte du nom du port
+                        })));
+                    }
+                }
+            }
+        }
         Ok(None)
     }
 
@@ -172,7 +214,9 @@ impl Backend {
     async fn parse_and_store(&self, uri: Url, code: String) {
         let (tree, modules, diagnostics) = self.analyser.parse_file(&code);
 
-        self.client.log_message(MessageType::INFO, format!("{}", tree.root_node().to_sexp())).await;
+        self.client
+            .log_message(MessageType::INFO, format!("{}", tree.root_node().to_sexp()))
+            .await;
 
         let new_doc = DocumentData {
             text: code,
