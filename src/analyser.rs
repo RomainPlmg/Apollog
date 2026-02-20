@@ -16,7 +16,7 @@ impl Analyser {
         Self { query }
     }
 
-    pub fn parse_file(&self, code: &str) -> (Vec<Module>, Vec<Diagnostic>) {
+    pub fn parse_file(&self, code: &str) -> (Tree, Vec<Module>, Vec<Diagnostic>) {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_verilog::LANGUAGE.into())
@@ -24,10 +24,10 @@ impl Analyser {
         let tree = parser.parse(code, None).unwrap();
 
         let mut diagnostics = Vec::new();
-        collect_errors(tree.root_node(), &mut diagnostics);
+        collect_errors(tree.clone().root_node(), &mut diagnostics);
 
-        let modules = self.extract_symbols(tree, code);
-        (modules, diagnostics)
+        let modules = self.extract_symbols(tree.clone(), code);
+        (tree, modules, diagnostics)
     }
 
     fn extract_symbols(&self, tree: Tree, code: &str) -> Vec<Module> {

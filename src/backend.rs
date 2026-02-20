@@ -5,11 +5,20 @@ use tower_lsp::{
     lsp_types::*,
     {Client, LanguageServer},
 };
+use tree_sitter::Tree;
+
+#[derive(Debug, Clone)]
+pub struct DocumentData {
+    pub text: String,
+    pub tree: Tree,
+    pub modules: Vec<Module>,
+    pub diagnostics: Vec<Diagnostic>,
+}
 
 #[derive(Debug)]
 pub struct Backend {
     pub client: Client,
-    db: DashMap<Url, Vec<Module>>,
+    db: DashMap<Url, DocumentData>,
     analyser: Analyser,
 }
 
@@ -50,16 +59,26 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let document = self.db.get(&params.text_document.uri);
+        if let Some(doc) = document {
+            self.client
+                .publish_diagnostics(params.text_document.uri, doc.diagnostics.clone(), None)
+                .await;
+        }
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
 
-        if let Some(modules) = self.db.get(&uri) {
+        if let Some(document) = self.db.get(&uri) {
+            let modules = &document.modules;
             let mut module_symbols = Vec::new();
 
-            for module in modules.value() {
+            for module in modules {
                 let mut port_symbols = Vec::new();
                 for port in &module.ports {
                     let display_name = if port.name.is_empty() {
@@ -113,8 +132,9 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        if let Some(modules) = self.db.get(&uri) {
-            for module in modules.value() {
+        if let Some(document) = self.db.get(&uri) {
+            let modules = &document.modules;
+            for module in modules {
                 for port in &module.ports {
                     if is_position_in_range(position, port.range) {
                         return Ok(Some(Hover {
@@ -150,13 +170,15 @@ impl Backend {
     }
 
     async fn parse_and_store(&self, uri: Url, code: String) {
-        let mut diagnostics = Vec::new();
-        let mut modules = Vec::new();
-        (modules, diagnostics) = self.analyser.parse_file(&code);
-        self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
-            .await;
+        let (tree, modules, diagnostics) = self.analyser.parse_file(&code);
 
-        self.db.insert(uri.clone(), modules);
+        let new_doc = DocumentData {
+            text: code,
+            modules: modules,
+            tree: tree,
+            diagnostics,
+        };
+
+        self.db.insert(uri, new_doc);
     }
 }
